@@ -1,3 +1,4 @@
+```
 src/
 ├── api/
 |    ├── dependencies
@@ -40,3 +41,4 @@ src/
 |    ├── logger.py
 |    └── text_processing.py
 └── main.py
+```
