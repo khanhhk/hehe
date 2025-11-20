@@ -12,11 +12,9 @@ from nemoguardrails import LLMRails, RailsConfig
 
 from src.api.routers.api import api_router
 from src.config.settings import APP_CONFIGS, SETTINGS
-from src.services.application.rag import rag_service
+from src.services.application.rag_service import rag_service
 
 load_dotenv()
-
-
 tracemalloc.start()
 
 

@@ -26,7 +26,7 @@ class StandardCache:
             port=int(self.storage_uri.split(":")[2]),
         )
 
-    def _cache_logic(self, func, args, kwargs, ttl, validatedModel, is_async=False):
+    def _cache_logic(self, func, args, kwargs):
         """Shared cache logic cho cả sync và async functions"""
         environment = SETTINGS.ENVIRONMENT
         module_name = func.__module__

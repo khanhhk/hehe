@@ -1,6 +1,6 @@
 from fastapi import Request
 
-from src.services.application.rag import Rag
+from src.services.application.rag_service import Rag
 
 
 def get_rag_service(request: Request) -> Rag:

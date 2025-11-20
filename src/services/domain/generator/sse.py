@@ -1,10 +1,12 @@
 from langchain_core.messages import AIMessage, SystemMessage
 
 from src.cache.semantic_cache import semantic_cache_llms
-from src.utils import logger
+from src.utils.logger import FrameworkLogger, get_logger
 from src.utils.text_processing import build_context
 
 from .base import BaseGeneratorService
+
+logger: FrameworkLogger = get_logger()
 
 
 class SSEGeneratorService(BaseGeneratorService):

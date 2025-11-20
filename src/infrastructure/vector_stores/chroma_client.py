@@ -42,7 +42,7 @@ class ChromaClientService:
 
         if self.client is None:
             self._connect()
-
+        assert self.client is not None
         if with_score:
             docs_with_scores: List[Tuple[Document, float]] = (
                 self.client.similarity_search_with_score(
@@ -50,8 +50,8 @@ class ChromaClientService:
                 )
             )
             try:
-                docs, scores = zip(*docs_with_scores)
-                return _format_docs(list(docs), list(scores))
+                retrieved_docs, scores = zip(*docs_with_scores)
+                return _format_docs(list(retrieved_docs), list(scores))
             except ValueError:
                 return "Không tìm thấy tài liệu phù hợp."
 

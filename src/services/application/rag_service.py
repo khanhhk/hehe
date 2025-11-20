@@ -164,6 +164,82 @@ class Rag:
             return rag_output
 
     # ----------------------------------------------SSE----------------------------------------------
+
+    async def _check_input_guardrails(self, question, session_id, user_id, guardrails):
+        messages = [
+            {
+                "role": "context",
+                "content": {"session_id": session_id, "user_id": user_id},
+            },
+            {"role": "user", "content": question},
+        ]
+        result = await guardrails.generate_async(
+            messages=messages, options={"rails": ["input"]}
+        )
+        for msg in result.response:
+            if msg.get("role") == "assistant":
+                assistant_msg = msg.get("content")
+                default_block = "I'm sorry, I can't respond to that."
+                if default_block in assistant_msg:
+                    return None, True, assistant_msg
+            if msg.get("role") == "user" and msg.get("content") != question:
+                question = msg.get("content")
+        return question, False, None
+
+    async def _stream_guardrails_response(
+        self, question, session_id, user_id, chat_history, span, guardrails
+    ):
+        messages = [
+            {
+                "role": "context",
+                "content": {"session_id": session_id, "user_id": user_id},
+            },
+            {"role": "user", "content": question},
+        ]
+        full_response = ""
+        is_blocked = False
+
+        async def rag_token_generator():
+            async for message in self.sse_generator_service.generate_stream(
+                question=question,
+                chat_history=chat_history.copy(),
+                session_id=session_id,
+                user_id=user_id,
+            ):
+                yield message
+
+        async for chunk in guardrails.stream_async(
+            messages=messages, generator=rag_token_generator()
+        ):
+            full_response += chunk
+            if is_guardrails_error(chunk):
+                is_blocked = True
+                error_msg = (
+                    "I'm sorry, but I cannot provide a response to that request."
+                )
+                yield f"{json.dumps(error_msg)}\n\n"
+                break
+            else:
+                yield f"{json.dumps(chunk)}\n\n"
+
+        span.update(
+            output=full_response if not is_blocked else "Request blocked by guardrails"
+        )
+
+    async def _stream_plain_rag_response(
+        self, question, session_id, user_id, chat_history, span
+    ):
+        full_response = ""
+        async for message in self.sse_generator_service.generate_stream(
+            question=question,
+            chat_history=chat_history.copy(),
+            session_id=session_id,
+            user_id=user_id,
+        ):
+            full_response += message
+            yield f"{json.dumps(message)}\n\n"
+        span.update(output=full_response)
+
     @semantic_cache_llms.cache(namespace="pre-cache")
     async def get_sse_response(
         self,
@@ -179,136 +255,30 @@ class Rag:
             self.langfuse.update_current_trace(session_id=session_id, user_id=user_id)
             chat_history = self.get_session_history(session_id)
 
-            # ———— CHECK INPUT RAILS TRƯỚC KHI GỌI LLM ————
+            # Step 1: Check input guardrails
             if guardrails:
-                messages = [
-                    {
-                        "role": "context",
-                        "content": {"session_id": session_id, "user_id": user_id},
-                    },
-                    {"role": "user", "content": question},
-                ]
-
-                # Chỉ check input rails
-                input_check_result = await guardrails.generate_async(
-                    messages=messages,
-                    options={"rails": ["input"]},  # CHỈ CHẠY INPUT RAILS
+                question, is_blocked, assistant_msg = (
+                    await self._check_input_guardrails(
+                        question, session_id, user_id, guardrails
+                    )
                 )
-
-                # Access the response attribute which contains the list of messages
-                response_messages = input_check_result.response
-                print(f"Response messages: {response_messages}")
-
-                # Check if there's an assistant message indicating blocking
-                assistant_message = None
-                for msg in response_messages:
-                    if msg.get("role") == "assistant":
-                        assistant_message = msg.get("content")
-                        break
-
-                # Lấy câu trả lời mặc định khi bị chặn từ config để so sánh
-                default_cant_respond = "I'm sorry, I can't respond to that."
-
-                if assistant_message and default_cant_respond in assistant_message:
-                    # Input bị block hoàn toàn
-                    yield f"{json.dumps(assistant_message)}\n\n"
+                if is_blocked:
+                    yield f"{json.dumps(assistant_msg)}\n\n"
                     span.update(output="Request blocked by input guardrails")
                     return
 
-                # Nếu không bị block, tìm user message để kiểm tra có bị alter không
-                user_message_content = None
-                for msg in response_messages:
-                    if msg.get("role") == "user":
-                        user_message_content = msg.get("content")
-                        break
-
-                # Input bị alter, dùng input đã được alter : Chỉ khi bật Private AI Integration thì mới dùng input đã được alter
-                # Tham khảo tại: https://docs.nvidia.com/nemo/guardrails/latest/user-guides/community/privateai.html
-                if user_message_content and user_message_content != question:
-                    # Input đã bị thay đổi (altered), ví dụ PII masking
-                    # Cập nhật `question` để dùng cho các bước sau
-                    print(
-                        f"Input altered from '{question}' to '{user_message_content}'"
-                    )
-                    question = user_message_content
-
-            # Tạo async generator cho external LLM streaming
-            async def rag_token_generator(question, chat_history, session_id, user_id):
-                """External generator sử dụng generator_service để tạo tokens"""
-                async for message in self.sse_generator_service.generate_stream(
-                    question=question,
-                    chat_history=chat_history.copy(),  # Xài copy để tránh không edit vào chat_history gốc, để mỗi req đến ta chỉ lưu response cuối cùng
-                    session_id=session_id,
-                    user_id=user_id,
+                # Step 2: Stream with guardrails
+                async for chunk in self._stream_guardrails_response(
+                    question, session_id, user_id, chat_history, span, guardrails
                 ):
-                    yield message
-
-            # ———— Nếu có Guardrails thì dùng external generator ————
-            if guardrails:
-                messages = [
-                    {
-                        "role": "context",
-                        "content": {"session_id": session_id, "user_id": user_id},
-                    },
-                    {"role": "user", "content": question},
-                ]
-
-                is_blocked = False
-                full_response = ""
-                # Sử dụng external generator với guardrails
-                async for chunk in guardrails.stream_async(
-                    messages=messages,
-                    generator=rag_token_generator(
-                        question, chat_history, session_id, user_id
-                    ),
-                ):
-                    full_response += chunk
-
-                    # Check if this chunk indicates blocking
-                    if is_guardrails_error(chunk):
-                        is_blocked = True
-                        # Send a clean error message instead
-                        error_message = "I'm sorry, but I cannot provide a response to that request."
-                        yield f"{json.dumps(error_message)}\n\n"
-                        break
-                    else:
-                        yield f"{json.dumps(chunk)}\n\n"
-
-                # Only save to history if not blocked
-                if not is_blocked:
-                    # self._save_to_session_history(session_id, question, full_response) # Removed as per new_code
-                    span.update(output=full_response)
-                    # Kiểm tra và tóm tắt lịch sử nếu cần (chạy sau khi response xong)
-                    # current_history = self.get_session_history(session_id) # Removed as per new_code
-                    # if len(current_history) >= 4: # Removed as per new_code
-                    #     summarized_history = await self.summarize_service._summarize_and_truncate_history( # Removed as per new_code
-                    #         chat_history=current_history, keep_last=2 # Removed as per new_code
-                    #     ) # Removed as per new_code
-                    #     self.session_histories[session_id] = summarized_history # Removed as per new_code
-                else:
-                    span.update(output="Request blocked by guardrails")
+                    yield chunk
                 return
 
-            # ———— Nếu không có Guardrails, streaming trực tiếp ————
-            full_response = ""
-            async for message in rag_token_generator(
-                question, chat_history, session_id, user_id
+            # Step 3: Stream with plain RAG
+            async for chunk in self._stream_plain_rag_response(
+                question, session_id, user_id, chat_history, span
             ):
-                full_response += message
-                yield f"{json.dumps(message)}\n\n"
-
-            # Save conversation sau khi stream xong
-            # self._save_to_session_history(session_id, question, full_response) # Removed as per new_code
-            span.update(output=full_response)
-            # Kiểm tra và tóm tắt lịch sử nếu cần (chạy sau khi response xong)
-            # current_history = self.get_session_history(session_id) # Removed as per new_code
-            # if len(current_history) >= 4: # Removed as per new_code
-            #     summarized_history = ( # Removed as per new_code
-            #         await self.summarize_service._summarize_and_truncate_history( # Removed as per new_code
-            #             chat_history=current_history, keep_last=2 # Removed as per new_code
-            #         ) # Removed as per new_code
-            #     ) # Removed as per new_code
-            #     self.session_histories[session_id] = summarized_history # Removed as per new_code
+                yield chunk
 
 
 rag_service = Rag()

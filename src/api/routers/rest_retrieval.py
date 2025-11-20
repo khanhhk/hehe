@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, status
 from nemoguardrails import LLMRails
 
 from src.api.dependencies.guarails import get_guardrails_restapi
-from src.api.dependencies.rag import get_rag_service
+from src.api.dependencies.rag_dependency import get_rag_service
 from src.schemas.api.requests import UserInput
 from src.schemas.api.response import ResponseOutput
-from src.services.application.rag import Rag
+from src.services.application.rag_service import Rag
 
 router = APIRouter()
 

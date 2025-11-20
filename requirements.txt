@@ -1,6 +1,6 @@
 # Storage & Database
 chromadb==1.0.20
-# minio==7.2.15
+minio==7.2.15
 # boto3>=1.38.13
 # redis>=5.0.0,<6.0.0
 langchain-redis==0.2.3
@@ -11,7 +11,7 @@ langchain-redis==0.2.3
 # pyarrow>=17.0.0
 # pypdf==5.6.1
 # tqdm==4.67.1
-# langchain-docling==1.0.0
+langchain-docling==1.0.0
 
 # LLM & Embeddings
 # langchain==0.3.26
@@ -23,7 +23,7 @@ sentence-transformers==2.6.1
 langchain-chroma==0.2.5
 
 # Utilities
-# wget==3.2
+wget==3.2
 # pydantic>=2.10.0
 
 # Web API

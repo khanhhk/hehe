@@ -7,9 +7,9 @@ from fastapi.responses import StreamingResponse
 from nemoguardrails import LLMRails
 
 from src.api.dependencies.guarails import get_guardrails_sse
-from src.api.dependencies.rag import get_rag_service
+from src.api.dependencies.rag_dependency import get_rag_service
 from src.schemas.api.requests import UserInput
-from src.services.application.rag import Rag
+from src.services.application.rag_service import Rag
 
 router = APIRouter()
 

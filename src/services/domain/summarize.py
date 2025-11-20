@@ -3,7 +3,9 @@ from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 
 from src.config.settings import SETTINGS
-from src.utils import logger
+from src.utils.logger import FrameworkLogger, get_logger
+
+logger: FrameworkLogger = get_logger()
 
 
 class SummarizeService:

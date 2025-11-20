@@ -42,3 +42,14 @@ src/
 |    └── text_processing.py
 └── main.py
 ```
+
+### Infrastructure Services
+#### Start the Redis cache service:
+docker compose -f infrastructure/cache/docker-compose.yaml up -d
+#### Start the Langfuse observability stack:
+docker compose -f infrastructure/observability/docker-compose.yaml up -d
+#### Start the data ingestion services (Airflow, Minio):
+docker compose -f ingest_data/docker-compose.yaml up -d
+
+### Start the RAG API Server
+python -m src.main --provider groq
