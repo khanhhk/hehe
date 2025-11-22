@@ -175,4 +175,4 @@ cython_debug/
 # VS Code settings
 .vscode/
 
-chatbot_env/
+rag_env/

@@ -8,6 +8,7 @@ models:
       temperature: 0.7
       max_tokens: 4096
       timeout:    60
+
   - type: self_check_input
     engine: openai
     model: "groq-guardrail-chat"
@@ -16,6 +17,7 @@ models:
       api_key: "sk-llmops"
       temperature: 0.0
       max_tokens: 10
+
   - type: self_check_output
     engine: openai
     model: "groq-guardrail-chat"

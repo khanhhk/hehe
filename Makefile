@@ -1,6 +1,6 @@
 SHELL = /bin/bash
 PYTHON := python3.11
-VENV_NAME = chatbot_env
+VENV_NAME = rag_env
 TEST_FOLDER = tests
 
 # Environment

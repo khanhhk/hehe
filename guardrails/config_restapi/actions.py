@@ -1,6 +1,6 @@
 import os
 import sys
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from nemoguardrails.actions import action
 
@@ -14,18 +14,66 @@ if PROJECT_ROOT not in sys.path:
 generator_service = rag_service.rest_generator_service
 
 
-async def get_query_response(user_question, session_id, user_id):
+async def get_query_response(
+    user_question: str, session_id: Optional[str], user_id: Optional[str]
+) -> str:
+    """
+    Gửi truy vấn đến hệ thống RAG để sinh câu trả lời dựa trên ngữ cảnh.
+
+    Args:
+        user_question (str): Câu hỏi của người dùng.
+        session_id (Optional[str]): ID của phiên hội thoại hiện tại.
+        user_id (Optional[str]): ID người dùng (phục vụ theo dõi hoặc context).
+
+    Returns:
+        str: Câu trả lời được sinh ra từ generator_service.
+    """
     history = rag_service.get_session_history(session_id)
     print("length of history is ", len(history))
     print("user_id is ", user_id)
     print("session_id is ", session_id)
+
+    # Gọi tới backend sinh dữ liệu dựa trên truy vấn + lịch sử
     return await generator_service.generate_rest_api(
         user_question,
-        history.copy(),  # Xài copy để tránh không edit vào chat_history gốc,
-        # để mỗi req đến ta chỉ lưu response cuối cùng
+        history.copy(),  # Dùng bản sao để không ảnh hưởng đến lịch sử gốc
         session_id,
         user_id,
     )
+
+
+@action(is_system_action=True)
+async def user_query(context: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Action hệ thống để xử lý câu hỏi người dùng bằng cách gọi RAG generator.
+
+    Args:
+        context (Optional[Dict[str, Any]]): Ngữ cảnh hiện tại gồm messages.
+
+    Returns:
+        str: Câu trả lời sinh ra từ RAG backend hoặc thông báo lỗi nếu thiếu dữ liệu.
+    """
+    if context is None:
+        return "No context provided."
+
+    messages = context.get("user_message", [])
+
+    user_question = None
+    session_id = None
+    user_id = None
+
+    for message in messages:
+        if message.get("role") == "user":
+            user_question = message.get("content")
+        elif message.get("role") == "context":
+            context_content = message.get("content", {})
+            session_id = context_content.get("session_id")
+            user_id = context_content.get("user_id")
+
+    if not user_question:
+        return "Could not find user message in the context."
+
+    return await get_query_response(user_question, session_id, user_id)
 
 
 # TODO: Check if you use model classification do guardrail, uncomment this
@@ -106,27 +154,3 @@ async def get_query_response(user_question, session_id, user_id):
 #         return True  # Allowed
 
 #     return False
-
-
-@action(is_system_action=True)
-async def user_query(context: Optional[dict] = None):
-    """Function to invoke the QA chain to query user message."""
-    if context is None:
-        return "No context provided."
-    messages = context.get("user_message", [])
-
-    user_question = None
-    session_id = None
-    user_id = None
-    for message in messages:
-        if message.get("role") == "user":
-            user_question = message.get("content")
-        elif message.get("role") == "context":
-            context_content = message.get("content", {})
-            session_id = context_content.get("session_id")
-            user_id = context_content.get("user_id")
-
-    if not user_question:
-        return "Could not find user message in the context."
-
-    return await get_query_response(user_question, session_id, user_id)
