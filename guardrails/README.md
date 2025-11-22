@@ -4,7 +4,7 @@ NeMo Guardrails is an open-source toolkit for easily adding programmable guardra
 ## Overview
 NeMo Guardrails enables developers building LLM-based applications to easily add programmable guardrails between the application code and the LLM.
 
-![](images/programmable_guardrails.png)
+![](../images/programmable_guardrails.png)
 
 Key benefits of adding programmable guardrails include:
 
