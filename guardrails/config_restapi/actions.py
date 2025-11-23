@@ -76,7 +76,7 @@ async def user_query(context: Optional[Dict[str, Any]] = None) -> str:
     return await get_query_response(user_question, session_id, user_id)
 
 
-# TODO: Check if you use model classification do guardrail, uncomment this
+# Optional: Check if you use model classification do guardrail, uncomment this
 # @action(name="self_check_input")
 # async def self_check_input(llm_task_manager, context: dict, llm):
 #     """

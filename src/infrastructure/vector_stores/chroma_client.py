@@ -1,13 +1,23 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain.schema.document import Document
 from langchain_chroma import Chroma
 
 from src.config.settings import SETTINGS
-from src.infrastructure.embeddings.embeddings import embedding_service
+from src.infrastructure.embeddings.embeddings import EmbeddingService
 
 
-def _format_docs(docs: List[Document], scores: List[float] | None = None) -> str:
+def _format_docs(docs: List[Document], scores: Optional[List[float]] = None) -> str:
+    """
+    Format a list of LangChain Document objects into a readable string.
+
+    Args:
+        docs (List[Document]): List of retrieved documents.
+        scores (Optional[List[float]]): Optional list of similarity scores.
+
+    Returns:
+        str: Formatted document contents, optionally with scores.
+    """
     formatted = []
     for idx, doc in enumerate(docs):
         content = doc.page_content.strip()
@@ -18,17 +28,21 @@ def _format_docs(docs: List[Document], scores: List[float] | None = None) -> str
 
 
 class ChromaClientService:
-    def __init__(self):
-        self.client = None
-        self.collection = None
-        self.embedding_service = embedding_service
+    """
+    Wrapper class for interacting with a Chroma vector store using LangChain.
 
-    def _connect(self):
-        persist_dir = SETTINGS.CHROMA_PERSIST_DIR
+    Handles connection, document retrieval, and similarity search
+    with optional filtering and scores.
+    """
 
+    def __init__(self) -> None:
+        """
+        Initialize the Chroma client service without establishing a connection yet.
+        """
+        self.embedding_service = EmbeddingService()
         self.client = Chroma(
             collection_name=SETTINGS.CHROMA_COLLECTION_NAME,
-            persist_directory=str(persist_dir),
+            persist_directory=SETTINGS.CHROMA_PERSIST_DIR,
             embedding_function=self.embedding_service,
         )
 
@@ -37,12 +51,21 @@ class ChromaClientService:
         query: str,
         top_k: int = 3,
         with_score: bool = False,
-        metadata_filter: Dict[str, Any] | None = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> str:
+        """
+        Perform a vector similarity search for a query string.
 
-        if self.client is None:
-            self._connect()
-        assert self.client is not None
+        Args:
+            query (str): The search query.
+            top_k (int): Number of top similar documents to retrieve.
+            with_score (bool): Whether to include similarity scores in the result.
+            metadata_filter (Optional[Dict[str, Any]]): Metadata filter to apply.
+
+        Returns:
+            str: Formatted string of the retrieved documents (with scores if requested).
+        """
+
         if with_score:
             docs_with_scores: List[Tuple[Document, float]] = (
                 self.client.similarity_search_with_score(

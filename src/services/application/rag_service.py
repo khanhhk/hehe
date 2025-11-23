@@ -1,5 +1,5 @@
 import json
-from logging import getLogger
+from typing import Any, AsyncGenerator, Optional
 
 from langchain.tools import StructuredTool
 from langchain_openai import ChatOpenAI
@@ -14,13 +14,24 @@ from src.schemas.domain.retrieval import SearchArgs
 from src.services.domain.generator.rest_api import RestApiGeneratorService
 from src.services.domain.generator.sse import SSEGeneratorService
 from src.services.domain.summarize import SummarizeService
+from src.utils.logger import FrameworkLogger, get_logger
 from src.utils.text_processing import is_guardrails_error
 
-logger = getLogger(__name__)
+logger: FrameworkLogger = get_logger()
 
 
 class Rag:
+    """
+    Main orchestration class for Retrieval-Augmented Generation (RAG) workflows.
+
+    This class provides:
+    - **REST mode**: single response generation using RAG and optional guardrails
+    - **SSE mode**: streaming responses with tool integration and safety filtering
+    - **Langfuse integration**: session tracing and telemetry tracking
+    """
+
     def __init__(self):
+        """Initialize RAG service components, tools, and Langfuse integration."""
         self.llm = ChatOpenAI(**SETTINGS.llm_config)
         self.chroma_client = ChromaClientService()
         self.langfuse_handler = CallbackHandler()
@@ -29,7 +40,7 @@ class Rag:
         # Không cần in-memory storage nữa vì sẽ lấy từ Langfuse
         # self.session_histories: dict[str, list[dict]] = {}
 
-        # Define search tool
+        # Define retrieval tool for vector search using Chroma
         self.search_tool = StructuredTool.from_function(
             name="search_docs",
             description=(
@@ -44,13 +55,11 @@ class Rag:
             args_schema=SearchArgs,
         )
 
-        # Define tools dictionary
+        # Tool registry for LangChain
         self.tools = {"search_docs": self.search_tool}
-
-        # Bind tools to LLM
         self.llm_with_tools = self.llm.bind_tools(list(self.tools.values()))
 
-        # Initialize services
+        # Initialize generator services for REST and SSE flows
         self.rest_generator_service = RestApiGeneratorService(
             llm_with_tools=self.llm_with_tools,
             tools=self.tools,
@@ -62,12 +71,27 @@ class Rag:
             langfuse_handler=self.langfuse_handler,
         )
 
+        # Summarization service for long chat histories
         self.summarize_service = SummarizeService(
             langfuse_handler=self.langfuse_handler,
         )
 
-    def get_session_history(self, session_id: str | None = None) -> list[dict]:
-        """Lấy chat history từ Langfuse dựa trên cấu trúc trace thực tế."""
+    # -------------------------------------------------------------------------
+    # CHAT HISTORY MANAGEMENT
+    # -------------------------------------------------------------------------
+    def get_session_history(
+        self, session_id: Optional[str] = None
+    ) -> list[dict[str, str]]:
+        """
+        Retrieve chat history from Langfuse session traces.
+
+        Args:
+            session_id (Optional[str]): Langfuse session identifier.
+
+        Returns:
+            list[dict[str, str]]: Alternating user/assistant message history
+            formatted as [{"role": "user", "content": "..."}, ...].
+        """
         if not session_id:
             return []
 
@@ -102,22 +126,30 @@ class Rag:
                             {"role": "assistant", "content": ai_answer},
                         ]
                     )
-
+            # Limit to the most recent 6 turns
             max_pairs = 6
             return chat_history[-(max_pairs * 2) :]
 
         except Exception as e:
-            print(f"Error fetching chat history from Langfuse: {e}")
+            logger.info(f"Error fetching chat history from Langfuse: {e}")
             return []
 
+    # -------------------------------------------------------------------------
+    # REST API RESPONSE
+    # -------------------------------------------------------------------------
     @semantic_cache_llms.cache(namespace="pre-cache")
     async def get_response(
         self,
         question: str,
-        session_id: str | None = None,
-        user_id: str | None = None,
-        guardrails: LLMRails | None = None,
-    ):
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        guardrails: Optional[LLMRails] = None,
+    ) -> str:
+        """
+        Generate a single RAG response via REST API.
+
+        Supports safety filtering via Guardrails when provided.
+        """
         with self.langfuse.start_as_current_span(
             name="get_restapi_response",
             input={"question": question, "session_id": session_id, "user_id": user_id},
@@ -125,9 +157,9 @@ class Rag:
             self.langfuse.update_current_trace(session_id=session_id, user_id=user_id)
 
             chat_history = self.get_session_history(session_id)
-            print("chat_history is ", chat_history)
+            logger.info(f"chat_history is {chat_history}")
 
-            # ———— Nếu có Guardrails thì dùng nó ————
+            # Case 1 — Guardrails-enabled flow
             if guardrails:
                 messages = [
                     {
@@ -152,7 +184,7 @@ class Rag:
                 span.update(output=response)
                 return response
 
-            # ———— Fallback: chạy RAG thường ————
+            # Case 2 — Standard RAG pipeline
             rag_output = await self.rest_generator_service.generate(
                 question=question,
                 chat_history=chat_history,
@@ -163,9 +195,22 @@ class Rag:
             span.update(output=rag_output)
             return rag_output
 
-    # ----------------------------------------------SSE----------------------------------------------
+    # -------------------------------------------------------------------------
+    # SSE STREAMING RESPONSE
+    # -------------------------------------------------------------------------
+    async def _check_input_guardrails(
+        self,
+        question: Optional[str],
+        session_id: str,
+        user_id: str,
+        guardrails: LLMRails,
+    ) -> tuple[Optional[str], bool, Optional[str]]:
+        """
+        Run Guardrails input filtering before generation.
 
-    async def _check_input_guardrails(self, question, session_id, user_id, guardrails):
+        Returns:
+            tuple: (possibly rewritten question, is_blocked, assistant_msg)
+        """
         messages = [
             {
                 "role": "context",
@@ -176,6 +221,7 @@ class Rag:
         result = await guardrails.generate_async(
             messages=messages, options={"rails": ["input"]}
         )
+
         for msg in result.response:
             if msg.get("role") == "assistant":
                 assistant_msg = msg.get("content")
@@ -187,8 +233,20 @@ class Rag:
         return question, False, None
 
     async def _stream_guardrails_response(
-        self, question, session_id, user_id, chat_history, span, guardrails
-    ):
+        self,
+        question: Optional[str],
+        session_id: str,
+        user_id: str,
+        chat_history: list[dict[str, str]],
+        span: Any,
+        guardrails: LLMRails,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream RAG response through Guardrails for real-time moderation.
+
+        Yields:
+            str: JSON-formatted response chunks.
+        """
         messages = [
             {
                 "role": "context",
@@ -227,8 +285,16 @@ class Rag:
         )
 
     async def _stream_plain_rag_response(
-        self, question, session_id, user_id, chat_history, span
-    ):
+        self,
+        question: Optional[str],
+        session_id: str,
+        user_id: str,
+        chat_history: list[dict[str, str]],
+        span: Any,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream RAG response without applying Guardrails.
+        """
         full_response = ""
         async for message in self.sse_generator_service.generate_stream(
             question=question,
@@ -243,11 +309,17 @@ class Rag:
     @semantic_cache_llms.cache(namespace="pre-cache")
     async def get_sse_response(
         self,
-        question: str,
+        question: Optional[str],
         session_id: str,
         user_id: str,
-        guardrails: LLMRails | None = None,
-    ):
+        guardrails: Optional[LLMRails] = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream a full RAG response (with or without Guardrails).
+
+        Yields:
+            str: JSON-formatted message chunks.
+        """
         with self.langfuse.start_as_current_span(
             name="get_sse_response",
             input={"question": question, "session_id": session_id, "user_id": user_id},
@@ -255,30 +327,33 @@ class Rag:
             self.langfuse.update_current_trace(session_id=session_id, user_id=user_id)
             chat_history = self.get_session_history(session_id)
 
-            # Step 1: Check input guardrails
+            # Step 1 — Input guardrails check
             if guardrails:
-                question, is_blocked, assistant_msg = (
-                    await self._check_input_guardrails(
-                        question, session_id, user_id, guardrails
-                    )
+                (
+                    question,
+                    is_blocked,
+                    assistant_msg,
+                ) = await self._check_input_guardrails(
+                    question, session_id, user_id, guardrails
                 )
                 if is_blocked:
                     yield f"{json.dumps(assistant_msg)}\n\n"
                     span.update(output="Request blocked by input guardrails")
                     return
 
-                # Step 2: Stream with guardrails
+                # Step 2 — Stream moderated response
                 async for chunk in self._stream_guardrails_response(
                     question, session_id, user_id, chat_history, span, guardrails
                 ):
                     yield chunk
                 return
 
-            # Step 3: Stream with plain RAG
+            # Step 3 — Plain RAG stream
             async for chunk in self._stream_plain_rag_response(
                 question, session_id, user_id, chat_history, span
             ):
                 yield chunk
 
 
+# Global singleton instance for dependency injection
 rag_service = Rag()

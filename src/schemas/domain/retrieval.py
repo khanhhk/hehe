@@ -2,15 +2,23 @@ from pydantic import BaseModel, Field
 
 
 class SearchArgs(BaseModel):
+    """
+    Input model for search or retrieval operations.
+
+    Attributes:
+        query (str): The user's search query or question.
+        top_k (int): The number of top results to return.
+        with_score (bool): Whether to include relevance scores in the results.
+    """
+
     query: str = Field(
-        description="User input",
         default="What do beetles eat?",
+        description="The user's search query or question.",
     )
     top_k: int = Field(
-        description="Number of results to return",
-        default=3,
+        default=3, description="The number of top search results to return."
     )
     with_score: bool = Field(
-        description="Whether to return the score of the results",
         default=False,
+        description="Whether to include the relevance score of each result.",
     )

@@ -132,7 +132,6 @@ with DAG(
     description="A DAG to ingest data",
     schedule_interval=None,
 ) as dag:
-
     # Tasks
     start = start_task()
     branch = check_collection_task()

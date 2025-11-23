@@ -11,7 +11,14 @@ logger: FrameworkLogger = get_logger()
 
 
 class RestApiGeneratorService(BaseGeneratorService):
-    """Generator service dành cho REST API"""
+    """
+    Generator service for handling REST API-based RAG inference flows.
+
+    This class manages a multi-phase pipeline:
+    1. Initial LLM call (with optional tool call detection)
+    2. Tool invocation (if applicable)
+    3. Final RAG-based response generation
+    """
 
     @observe(name="initial_llm_call_rest_api")
     async def _initial_llm_call(
@@ -21,16 +28,25 @@ class RestApiGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
-        """Phase 1: Initial LLM call để kiểm tra tool calls"""
+        """
+        Phase 1: Perform initial LLM call to detect tool calls (if any).
+
+        Returns:
+            - ai_msg: LLM response (may include tool_calls)
+            - messages: SystemMessage-based input prompt to the LLM
+        """
         self._update_trace_context(session_id, user_id)
-        # Format chat history to be included in the prompt
+
         formatted_history = "\n".join(
             f"{m['role'].capitalize()}: {m['content']}" for m in chat_history
         )
+
         prompt_template = self.prompt_userinput.get_langchain_prompt(
             question=question, chat_history=formatted_history
         )
+
         messages = [SystemMessage(content=prompt_template)]
+
         ai_msg = await self.llm_with_tools.ainvoke(
             messages,
             {
@@ -51,6 +67,14 @@ class RestApiGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
+        """
+        Phase 1 & 2: Initial LLM call → Tool execution (if tools exist).
+
+        Returns:
+            Tuple:
+                - has_tools (bool): Whether tools were invoked.
+                - str | list: Answer or updated message list.
+        """
         # Phase 1: Initial LLM call with chat history
         ai_msg, messages = await self._initial_llm_call(
             question, chat_history, session_id, user_id
@@ -62,11 +86,11 @@ class RestApiGeneratorService(BaseGeneratorService):
         tool_calls = ai_msg.additional_kwargs.get("tool_calls", [])
 
         if not tool_calls:
-            # Không có tool calls - trả về answer trực tiếp
+            # No tool calls — return the answer directly
             answer = self.clear_think.sub("", ai_msg.content).strip()
             return False, answer
 
-        # Phase 2: Thực thi tools
+        # Phase 2: Tool execution
         messages = await self._execute_tools(tool_calls, messages, session_id, user_id)
 
         return True, messages
@@ -81,7 +105,11 @@ class RestApiGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
-        """Phase 3: RAG generation với context từ tools"""
+        """
+        Phase 3: Perform final RAG generation using tools + retrieved context.
+
+        This method is cached via Redis Semantic Cache.
+        """
         self._update_trace_context(session_id, user_id)
 
         context_str = build_context(messages)
@@ -106,6 +134,7 @@ class RestApiGeneratorService(BaseGeneratorService):
                 },
             },
         )
+
         content = raw.content if isinstance(raw.content, str) else str(raw.content)
         answer = self.clear_think.sub("", content).strip()
 
@@ -119,14 +148,24 @@ class RestApiGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
+        """
+        Entry point for serving REST API inference requests.
+
+        Full flow:
+            1. Initial LLM call (tool detection)
+            2. Tool execution if needed
+            3. Final RAG answer generation
+
+        Returns:
+            str: Final answer from the model.
+        """
         try:
             has_tools, result = await self._create_message(
                 question, chat_history, session_id, user_id
             )
 
             if not has_tools:
-                # Không có tools - trả về answer trực tiếp
-                return result
+                return result  # Direct answer from LLM
 
             # Có tools - tiếp tục với RAG prompt
             messages = result
@@ -141,5 +180,5 @@ class RestApiGeneratorService(BaseGeneratorService):
             return answer
 
         except Exception as e:
-            logger.error(f"Error in generate(): {e}")
+            logger.error(f"Error in generate_rest_api(): {e}")
             raise

@@ -9,6 +9,7 @@ from docling.chunking import HybridChunker
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
 from docling.document_converter import DocumentConverter, PdfFormatOption
+from langchain.schema import Document
 from langchain_docling.loader import DoclingLoader, ExportType
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
@@ -24,10 +25,17 @@ minio_loader = MinioLoader(MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY)
 
 
 def get_num_cpu() -> int:
+    """Get number of available CPU cores."""
     return multiprocessing.cpu_count()
 
 
-def create_advanced_converter():
+def create_advanced_converter() -> DocumentConverter:
+    """
+    Create a Docling DocumentConverter that supports both PDF and DOCX parsing.
+
+    Returns:
+        DocumentConverter: Configured for table structure extraction in PDFs.
+    """
     pdf_pipeline_options = PdfPipelineOptions()
     pdf_pipeline_options.do_ocr = False
     pdf_pipeline_options.do_table_structure = True  # Bật nhận dạng cấu trúc bảng
@@ -51,6 +59,15 @@ def create_advanced_converter():
 
 
 class LoadAndChunk:
+    """
+    Document processing pipeline for reading, chunking, and storing PDF/DOCX files.
+
+    Features:
+    - Multi-format support (PDF, DOCX, DOC)
+    - Token-based recursive chunking
+    - Upload/download to MinIO
+    """
+
     def __init__(
         self,
         embed_model_id: str = (
@@ -60,14 +77,12 @@ class LoadAndChunk:
         chunk_overlap: int = 50,
     ) -> None:
         """
-        Khởi tạo LoadAndChunk với Docling.
+        Initialize LoadAndChunk with tokenizer and split settings.
 
         Args:
-            embed_model_id: Model embedding để tính toán token
-            max_tokens: Số token tối đa cho mỗi chunk
-            chunk_overlap: Số token gối đầu giữa các chunk
-            models_cache_dir: Thư mục cache cho các model Docling
-            split_kwargs: Tham số legacy (giữ lại để tương thích)
+            embed_model_id: HuggingFace embedding model ID.
+            max_tokens: Max number of tokens per chunk.
+            chunk_overlap: Overlapping tokens between adjacent chunks.
         """
         self.embed_model_id = embed_model_id
         self.max_tokens = max_tokens
@@ -79,18 +94,15 @@ class LoadAndChunk:
         self.tokenizer = None
         self.recursive_splitter = None
 
-    def _init_converter(self):
-        """Lazy initialization of converter"""
+    def _init_converter(self) -> None:
+        """Lazily initialize the document converter."""
         if self.converter is None:
             self.converter = create_advanced_converter()
 
-    def _init_tokenizer_and_splitter(self):
-        """Lazy initialization of tokenizer and splitter"""
+    def _init_tokenizer_and_splitter(self) -> None:
+        """Lazily initialize tokenizer and recursive splitter."""
         if self.tokenizer is None:
-            print(
-                "-> Đang khởi tạo tokenizer cho model: "
-                "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-            )
+            print(f"-> Initializing tokenizer: {self.embed_model_id}")
             self.tokenizer = get_tokenizer()
 
             self.recursive_splitter = (
@@ -101,15 +113,15 @@ class LoadAndChunk:
                 )
             )
 
-    def read_and_chunk(self, files: Union[str, List[str]]):
+    def read_and_chunk(self, files: Union[str, List[str]]) -> List[Document]:
         """
-        Đọc và chia nhỏ tài liệu sử dụng Docling.
+        Load and chunk one or more document files using Docling and LangChain.
 
         Args:
-            files: Đường dẫn file hoặc danh sách đường dẫn file
+            files: File path or list of file paths.
 
         Returns:
-            List của các Document đã được chia nhỏ
+            List[Document]: Tokenized and split document chunks.
         """
         if isinstance(files, str):
             files = [files]
@@ -117,32 +129,26 @@ class LoadAndChunk:
         # Khởi tạo converter và tokenizer
         self._init_converter()
         self._init_tokenizer_and_splitter()
+
         assert self.tokenizer is not None
         assert self.recursive_splitter is not None
-        # Filter files that Docling can handle
+
+        # Filter supported formats
         supported_files = [
             f for f in files if f.lower().endswith((".pdf", ".docx", ".doc"))
         ]
-
         if not supported_files:
-            raise ValueError(
-                "No files supported by Docling found. Supported formats: PDF, DOCX, DOC"
-            )
+            raise ValueError("No supported files found. Accepted: PDF, DOCX, DOC.")
 
         if len(supported_files) != len(files):
             unsupported = [f for f in files if f not in supported_files]
-            print(
-                f"Warning: {len(unsupported)} files not supported by Docling "
-                f"will be skipped: {unsupported}"
-            )
+            print(f"Warning: Skipping unsupported files: {unsupported}")
 
-        print(f"Processing {len(supported_files)} files with Docling...")
+        print(f"Processing {len(supported_files)} file(s)...")
 
         all_docs = []
 
-        for file_path in tqdm(
-            supported_files, desc="Processing files with Docling", unit="file"
-        ):
+        for file_path in tqdm(supported_files, desc="Processing files", unit="file"):
             print(f"\n-> Bắt đầu đọc và chunking tài liệu: {file_path}")
 
             # Khởi tạo DoclingLoader với converter đã tùy chỉnh
@@ -155,7 +161,7 @@ class LoadAndChunk:
 
             # Lấy các chunk ban đầu từ Docling
             initial_docs = loader.load()
-            print(f"==> Số chunk ban đầu từ Docling: {len(initial_docs)}")
+            print(f"==> Số chunk ban đầu: {len(initial_docs)}")
 
             # Xử lý hậu kỳ để đảm bảo các chunk không vượt quá max_tokens
             print(
@@ -181,22 +187,22 @@ class LoadAndChunk:
                     # Nếu chunk có kích thước ổn, giữ nguyên nó
                     final_splits.append(doc)
 
-            print(
-                f"==> Đã phát hiện và chia nhỏ {oversized_chunks_count} chunk quá khổ."
-            )
-            print(f"==> Tổng số chunk cuối cùng sau khi xử lý: {len(final_splits)}")
+            print(f"==> {oversized_chunks_count} oversized chunk(s) were split.")
+            print(f"==> Final total chunks: {len(final_splits)}")
 
             all_docs.extend(final_splits)
 
         return all_docs
 
-    def ingest_to_minio(self, data, s3_path: str):
+    def ingest_to_minio(self, data: List[Document], s3_path: str) -> None:
         """
-        Serialize dữ liệu bằng pickle và upload lên MinIO.
-        Hàm này giờ sẽ chịu trách nhiệm cho việc chuẩn bị dữ liệu.
-        """
-        print(f"-> Bắt đầu serialize và ingest dữ liệu tới: {s3_path}")
+        Serialize and upload document chunks to MinIO.
 
+        Args:
+            data: List of chunked documents.
+            s3_path: Destination path in MinIO (bucket/key).
+        """
+        print(f"-> Uploading serialized data to: {s3_path}")
         buffer = BytesIO()
         pickle.dump(data, buffer)
         data_length = buffer.tell()
@@ -207,27 +213,31 @@ class LoadAndChunk:
         )
         print("-> Ingest thành công!")
 
-    def load_from_minio(self, s3_path: str):
+    def load_from_minio(self, s3_path: str) -> List[Document]:
         """
-        Download dữ liệu từ MinIO và deserialize bằng pickle.
-        """
-        print(f"-> Bắt đầu download và deserialize dữ liệu từ: {s3_path}")
-
-        buffer = minio_loader.download_object_as_stream(s3_path)
-
-        data = pickle.load(buffer)
-        print("-> Download và deserialize thành công!")
-        return data
-
-    def load_dir(self, dir_path: str):
-        """
-        Tìm tất cả file PDF và Word trong thư mục.
+        Load and deserialize document chunks from MinIO.
 
         Args:
-            dir_path: Đường dẫn thư mục
+            s3_path: Path in MinIO.
 
         Returns:
-            List đường dẫn file
+            List[Document]: Deserialized list of documents.
+        """
+        print(f"-> Downloading and deserializing from: {s3_path}")
+        buffer = minio_loader.download_object_as_stream(s3_path)
+        data = pickle.load(buffer)
+        print("-> Load successful.")
+        return data
+
+    def load_dir(self, dir_path: str) -> List[str]:
+        """
+        Scan a directory for PDF and Word documents.
+
+        Args:
+            dir_path: Folder path to scan.
+
+        Returns:
+            List[str]: List of document file paths.
         """
         # Support both PDF and Word files
         pdf_files = glob.glob(f"{dir_path}/*.pdf")
@@ -237,21 +247,19 @@ class LoadAndChunk:
 
         if not all_files:
             raise ValueError(f"No PDF or Word document files found in {dir_path}")
-        print(
-            f"Found {len(pdf_files)} PDF files and "
-            f"{len(word_files)} Word document files"
-        )
+
+        print(f"Found {len(pdf_files)} PDFs and {len(word_files)} Word files.")
         return all_files
 
-    def process_directory(self, dir_path: str):
+    def process_directory(self, dir_path: str) -> List[Document]:
         """
-        Xử lý toàn bộ thư mục: tìm file và chia nhỏ.
+        Process all documents in a directory.
 
         Args:
-            dir_path: Đường dẫn thư mục
+            dir_path: Directory containing PDF/DOCX/DOC files.
 
         Returns:
-            List của các Document đã được chia nhỏ
+            List[Document]: List of fully chunked documents.
         """
         files = self.load_dir(dir_path)
         return self.read_and_chunk(files)

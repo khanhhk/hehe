@@ -1,86 +1,108 @@
 import asyncio
 import json
-import logging
 from functools import wraps
-from typing import Any
+from typing import Any, Callable, Optional, Tuple, Union
 from uuid import UUID
 
 import redis
 from nemoguardrails import LLMRails
 
 from src.config.settings import SETTINGS
+from src.utils.logger import FrameworkLogger, get_logger
+
+logger: FrameworkLogger = get_logger()
 
 
 class UUIDEncoder(json.JSONEncoder):
+    """Custom JSON encoder to convert UUIDs to strings."""
+
     def default(self, obj):
         if isinstance(obj, UUID):
             return str(obj)
-        return json.JSONEncoder.default(self, obj)
+        return super().default(self, obj)
 
 
 class StandardCache:
-    def __init__(self):
+    """
+    Standard caching layer for both sync and async functions using Redis.
+
+    Supports:
+    - Transparent decorator-based cache control.
+    - Key generation based on function metadata and arguments.
+    - Optional response validation via Pydantic models.
+    """
+
+    def __init__(self) -> None:
         self.storage_uri = f"redis://{SETTINGS.REDIS_URI}"
         self.client = redis.Redis(
             host=self.storage_uri.split(":")[1].replace("//", ""),
             port=int(self.storage_uri.split(":")[2]),
         )
 
-    def _cache_logic(self, func, args, kwargs):
-        """Shared cache logic cho cả sync và async functions"""
+    def _cache_logic(
+        self,
+        func: Callable,
+        args: Tuple,
+        kwargs: dict,
+    ) -> Tuple[Optional[str], Optional[Union[str, dict]]]:
+        """
+        Core logic to construct cache key and check Redis for a cached value.
+
+        Returns:
+            - ("hit", result): on cache hit
+            - ("miss", key): on cache miss
+            - (None, None): if Redis is unavailable
+        """
         environment = SETTINGS.ENVIRONMENT
         module_name = func.__module__
         func_name = func.__qualname__
 
-        # Bỏ 'self' và LLMRails khỏi args để tránh serialization issues
+        # Strip 'self' and filter out LLMRails instances in args
         if args and hasattr(args[0], func.__name__):
-            # Xử lý method: bỏ qua self (args[0]) và lọc LLMRails
+            # It's a class method: remove 'self'
             args_to_serialize = tuple(
                 arg for arg in args[1:] if not isinstance(arg, LLMRails)
             )
             class_name = args[0].__class__.__name__
             func_name = f"{class_name}.{func.__name__}"
         else:
-            # Xử lý function: lọc LLMRails
             args_to_serialize = tuple(
                 arg for arg in args if not isinstance(arg, LLMRails)
             )
 
-        # Lọc LLMRails khỏi kwargs
+        # Filter out LLMRails instances in kwargs
         kwargs_to_serialize = {
             k: v for k, v in kwargs.items() if not isinstance(v, LLMRails)
         }
-        # Tạo cache key
+
+        # Build cache key
         dumped_args = self.serialize(args_to_serialize)
         dumped_kwargs = self.serialize(kwargs_to_serialize)
         key = (
             f"mlops:{environment}:{module_name}:"
             + f"{func_name}:{dumped_args}:{dumped_kwargs}"
         )
-        logging.info(f"Cached key: {key}")
+        logger.info(f"Cached key: {key}")
 
-        # Kiểm tra Redis connection
+        # Try to retrieve from cache
         try:
             cached_result = self.client.get(key)
-            logging.info(f"Cache lookup result: {cached_result is not None}")
+            logger.info(f"Cache lookup: {'HIT' if cached_result else 'MISS'}")
         except Exception as e:
-            logging.warning(f"Redis not available for key: {key}, error: {e}")
-            return None, None  # Signal: gọi function trực tiếp
+            logger.warning(f"Redis error accessing key {key}: {e}")
+            return None, None
 
-        # Cache HIT - trả về kết quả từ cache
         if cached_result:
-            logging.info(f"Cache HIT for key: {key}")
             return "hit", self.deserialize(cached_result)
-
-        # Cache MISS - cần gọi function
-        logging.info(f"Cache MISS for key: {key}")
         return "miss", key
 
-    def cache(self, *, ttl: int = 60 * 60, validatedModel: Any = None):
+    def cache(self, *, ttl: int = 60 * 60, validatedModel: Any = None) -> Callable:
         """
-        Decorator hỗ trợ cả sync và async functions
-        - Tự động detect function type (sync/async)
-        - Cache kết quả trong Redis với TTL
+        Decorator for caching both sync and async functions.
+
+        Args:
+            ttl (int): Time-to-live for the cache entry in seconds.
+            validatedModel (Optional[Any]): Pydantic model to validate cached response.
         """
 
         def inner(func):
@@ -94,11 +116,11 @@ class StandardCache:
                         func, args, kwargs, ttl, validatedModel, True
                     )
 
-                    if cache_result is None:  # Redis lỗi
+                    if cache_result is None:
                         return await func(*args, **kwargs)
-                    elif cache_result == "hit":  # Cache HIT
+                    elif cache_result == "hit":
                         return data
-                    else:  # Cache MISS - gọi function và store kết quả
+                    else:
                         result = await func(*args, **kwargs)
                         self._store_result(data, result, ttl, validatedModel)
                         return result
@@ -112,11 +134,11 @@ class StandardCache:
                         func, args, kwargs, ttl, validatedModel, False
                     )
 
-                    if cache_result is None:  # Redis lỗi
+                    if cache_result is None:
                         return func(*args, **kwargs)
-                    elif cache_result == "hit":  # Cache HIT
+                    elif cache_result == "hit":
                         return data
-                    else:  # Cache MISS - gọi function và store kết quả
+                    else:
                         result = func(*args, **kwargs)
                         self._store_result(data, result, ttl, validatedModel)
                         return result
@@ -125,58 +147,107 @@ class StandardCache:
 
         return inner
 
-    def _store_result(self, key, result, ttl, validatedModel):
-        """Lưu kết quả vào cache với validation (nếu có) ---
-        Có 2 trường hợp lưu là 2 kết quả của Langchain và Guardrails"""
-        data_to_serialize = None
-        # Check if result is a Pydantic model
-        if hasattr(result, "model_dump"):
-            data_to_serialize = result.model_dump()
-        # Check if it's a list of Pydantic models
-        elif isinstance(result, list) and result and hasattr(result[0], "model_dump"):
-            data_to_serialize = [r.model_dump() for r in result]
-        # Otherwise, assume it's a dict or other JSON-serializable type
-        else:
-            data_to_serialize = result
+    def _store_result(
+        self,
+        key: str,
+        result: Any,
+        ttl: int,
+        validatedModel: Optional[Any] = None,
+    ) -> None:
+        """
+        Store function result in Redis with optional validation.
 
+        Supports:
+        - Pydantic model serialization (single or list).
+        - Fallback to raw JSON serialization.
+        """
         try:
+            # Handle Pydantic models
+            if hasattr(result, "model_dump"):
+                data_to_serialize = result.model_dump()
+            elif (
+                isinstance(result, list) and result and hasattr(result[0], "model_dump")
+            ):
+                data_to_serialize = [r.model_dump() for r in result]
+            else:
+                data_to_serialize = result
+
             serialized_result = self.serialize(data_to_serialize)
         except TypeError as e:
-            logging.warning(f"Could not serialize result for key: {key}, error: {e}")
-            return  # Do not cache if serialization fails
+            logger.warning(f"Serialization failed for key: {key}, error: {e}")
+            return
 
-        # Validation (optional)
+        # Optional validation step before storing
         if validatedModel:
             try:
                 validatedModel(**self.deserialize(serialized_result))
             except Exception as e:
-                logging.warning(f"Validation failed for key: {key}, error: {e}")
-                return  # Không cache nếu validation fail
+                logger.warning(f"Validation failed for key: {key}, error: {e}")
+                return
 
-        # Store vào Redis
+        # Store in Redis
         self.set_key(key, serialized_result, ttl)
-        logging.info(f"Cache STORED for key: {key}")
+        logger.info(f"Cache STORED for key: {key}")
 
-    def set_key(self, key: str, value: Any, ttl: int = 60 * 60):
-        """Sets key value pair in redis cache"""
+    def set_key(self, key: str, value: Any, ttl: int = 60 * 60) -> None:
+        """
+        Set a Redis key with TTL.
+
+        Args:
+            key (str): The Redis key.
+            value (Any): The value to store (JSON serialized).
+            ttl (int): Time to live in seconds.
+        """
         self.client.set(key, value)
         self.client.expire(key, ttl)
 
-    def remove_key(self, key: str):
-        """Removes key from redis cache"""
+    def remove_key(self, key: str) -> None:
+        """
+        Delete a key from Redis cache.
+
+        Args:
+            key (str): The key to remove.
+        """
         self.client.delete(key)
 
     def serialize(self, value: Any) -> str:
-        """Serializes the value to json"""
+        """
+        Serialize Python object to JSON string.
+
+        Args:
+            value (Any): The object to serialize.
+
+        Returns:
+            str: JSON representation.
+        """
         return json.dumps(value, cls=UUIDEncoder, sort_keys=True)
 
-    def deserialize(self, value: str) -> dict:
-        """Deserializes the value from json"""
+    def deserialize(self, value: Union[str, bytes]) -> dict:
+        """
+        Deserialize JSON string from Redis.
+
+        Args:
+            value (str | bytes): Raw JSON string.
+
+        Returns:
+            dict: Parsed object.
+        """
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
         return json.loads(value)
 
-    def list_keys(self, pattern: str = f"mlops:{SETTINGS.ENVIRONMENT}:*") -> Any:
-        """List all keys in redis cache"""
+    def list_keys(self, pattern: str = f"mlops:{SETTINGS.ENVIRONMENT}:*") -> list:
+        """
+        List all Redis keys matching a pattern.
+
+        Args:
+            pattern (str): Pattern to match keys.
+
+        Returns:
+            list: Matching Redis keys.
+        """
         return self.client.keys(pattern)
 
 
+# Singleton instance
 standard_cache = StandardCache()

@@ -17,9 +17,12 @@ style:
 	isort . --skip ${VENV_NAME}
 
 test:
-	flake8 . --exclude ${VENV_NAME}
-	mypy . --exclude ${VENV_NAME}
+	@echo "🔍 Running flake8..."
+	flake8 . --exclude=${VENV_NAME},.venv,__pycache__
+	@echo "🔍 Running mypy..."
+	mypy . --config-file mypy.ini
+	@echo "✅ Running pytest..."
 	CUDA_VISIBLE_DEVICES="" ${PYTHON} -m pytest -s --durations=0 --disable-warnings ${TEST_FOLDER}/
-	pylint . --ignore=${VENV_NAME}
-
+	@echo "🔍 Running pylint..."
+	pylint . --ignore=${VENV_NAME},.venv,__pycache__ --recursive=y --output-format=colorized
 .PHONY: venv style test

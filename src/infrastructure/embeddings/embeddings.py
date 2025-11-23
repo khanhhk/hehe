@@ -1,6 +1,5 @@
 from typing import List
 
-import numpy as np
 import torch
 from langchain.embeddings.base import Embeddings
 from sentence_transformers import SentenceTransformer
@@ -15,15 +14,27 @@ class EmbeddingService(Embeddings):
         self.embedding_model = SentenceTransformer(model_name).to(device)
 
     def embed_query(self, text: str) -> List[float]:
-        """Embed a single text (normalized vector) and return as list."""
-        # SentenceTransformer.encode returns a numpy array for a single string
+        """
+        Embed a single input string as a normalized vector.
+
+        Args:
+            text (str): The input text to be embedded.
+
+        Returns:
+            List[float]: The normalized embedding vector as a list of floats.
+        """
         vector = self.embedding_model.encode(text, normalize_embeddings=True)
-        return np.array(vector).tolist()
+        return vector.tolist()
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of texts (normalized vectors) and return as list of lists."""
+        """
+        Embed a list of input strings as normalized vectors.
+
+        Args:
+            texts (List[str]): A list of input texts to be embedded.
+
+        Returns:
+            List[List[float]]: A list of normalized embedding vectors.
+        """
         vectors = self.embedding_model.encode(texts, normalize_embeddings=True)
-        return np.array(vectors).tolist()
-
-
-embedding_service = EmbeddingService()
+        return vectors.tolist()

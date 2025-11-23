@@ -40,7 +40,6 @@ def is_guardrails_error(response: Union[str, dict]) -> bool:
         bool: True if a guardrails error or blocking message is
         detected, False otherwise.
     """
-
     # If response is a dictionary (use for restapi)
     if isinstance(response, dict):
         # Check for direct error key

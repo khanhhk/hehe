@@ -1,18 +1,18 @@
 from enum import Enum
 
 
-class LLMModel(Enum):
+class LLMModel(str, Enum):
     """
-    Enum for LLM models.
+    Enum representing supported LLM model identifiers.
     """
 
     OPENAI_TEXT_EMBEDDING_3_LARGE = "text-embedding-3-large"
     OPENAI_GPT_4O_MINI = "gpt-4o-mini"
 
 
-class LLMProvider(Enum):
+class LLMProvider(str, Enum):
     """
-    Enum for LLM providers.
+    Enum representing supported LLM service providers.
     """
 
     OPENAI = "openai"

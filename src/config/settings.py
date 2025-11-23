@@ -8,7 +8,14 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 class Settings(BaseSettings):
-    """Application settings with environment support."""
+    """
+    Application settings with environment variable support.
+
+    These settings configure server behavior, LLM parameters,
+    vector storage (Chroma), caching, observability (Langfuse),
+    and guardrails configuration. Default values can be overridden
+    by environment variables or a .env file.
+    """
 
     # Server Configuration
     HOST: str = "0.0.0.0"
@@ -17,22 +24,20 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     ENVIRONMENT: str = "development"
 
-    # Litellm Configuration
+    # LiteLLM Configuration
     LITELLM_BASE_URL: str = "http://localhost:4000"
     LITELLM_API_KEY: str = "sk-llmops"
     LITELLM_MODEL: str = os.getenv(
         "LITELLM_MODEL", "groq"
-    )  # Default to groq if not set
+    )  # Default LLM model to use via LiteLLM
 
-    # LLM Parameters
+    # LLM Generation Parameters
     LLM_TEMPERATURE: float = 0.7
     LLM_MAX_TOKENS: int = 2048
     LLM_STREAMING: bool = False
 
-    # RAG Configuration - Dynamic dataset support
-    DATASET_NAME: str = os.getenv(
-        "DATASET_NAME", "environment_battery"
-    )  # Dynamic from environment
+    # RAG Configuration
+    DATASET_NAME: str = os.getenv("DATASET_NAME", "environment_battery")
     CHROMA_COLLECTION_NAME: str = f"rag-pipeline-{DATASET_NAME}"
     CHROMA_PERSIST_DIR: str = str(
         PROJECT_ROOT / "infrastructure" / "storage" / "chromadb"
@@ -43,7 +48,7 @@ class Settings(BaseSettings):
     MAX_RESPONSE_LENGTH: int = 2048
     REDIS_URI: str = "localhost:6378"
 
-    # Langfuse Configuration
+    # Langfuse Observability
     LANGFUSE_SECRET_KEY: Optional[str] = os.getenv("LANGFUSE_SECRET_KEY")
     LANGFUSE_PUBLIC_KEY: Optional[str] = os.getenv("LANGFUSE_PUBLIC_KEY")
     LANGFUSE_HOST: Optional[str] = os.getenv("LANGFUSE_HOST")
@@ -54,7 +59,13 @@ class Settings(BaseSettings):
 
     @property
     def llm_config(self) -> Dict[str, Any]:
-        """Get LLM configuration based on provider."""
+        """
+        Generate a dictionary of parameters for initializing LLM clients.
+
+        Returns:
+            Dict[str, Any]: A dictionary including temperature, streaming mode,
+            token limits, base URL, API key, and model name.
+        """
         return {
             "temperature": self.LLM_TEMPERATURE,
             "streaming": self.LLM_STREAMING,
@@ -65,8 +76,10 @@ class Settings(BaseSettings):
         }
 
 
-SETTINGS = Settings()
+# Global settings instance (imported throughout the app)
+SETTINGS: Settings = Settings()
 
+# FastAPI configuration for metadata display
 APP_CONFIGS: Dict[str, Any] = {
     "title": "RAG Ops - Production Architecture",
     "description": (

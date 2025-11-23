@@ -19,14 +19,36 @@ router = APIRouter()
     status_code=status.HTTP_200_OK,
 )
 async def retrieve_restaurants(
-    input: UserInput,
+    user_input: UserInput,
     rag_service: Rag = Depends(get_rag_service),
     guardrails: LLMRails = Depends(get_guardrails_sse),
-):
+) -> StreamingResponse:
+    """
+    SSE endpoint for streaming RAG responses with guardrails integration.
+
+    This endpoint:
+    - Accepts a user question via `user_input`
+        (which includes optional session/user IDs).
+    - Ensures `session_id` and `user_id` are generated if not provided.
+    - Sends an initial metadata event (with session/user info).
+    - Streams the LLM response using Server-Sent Events (SSE),
+        enforcing Guardrails if configured.
+
+    Args:
+        user_input (UserInput): The incoming user request payload, including input text
+        and optional IDs.
+        rag_service (Rag): The RAG service to generate responses
+        (injected via dependency).
+        guardrails (LLMRails): The guardrails runtime for filtering/moderating
+        output (injected).
+
+    Returns:
+        StreamingResponse: An SSE response that streams chunks of generated text.
+    """
     try:
         # Check và generate session_id/user_id ở router
-        session_id = input.session_id or str(uuid.uuid4())
-        user_id = input.user_id or f"user_{str(uuid.uuid4())[:8]}"
+        session_id = user_input.session_id or str(uuid.uuid4())
+        user_id = user_input.user_id or f"user_{str(uuid.uuid4())[:8]}"
 
         async def generate_response():
             # Gửi metadata trước
@@ -35,7 +57,7 @@ async def retrieve_restaurants(
 
             # Stream response
             async for chunk in rag_service.get_sse_response(
-                question=input.user_input,
+                question=user_input.user_input,
                 session_id=session_id,
                 user_id=user_id,
                 guardrails=guardrails,

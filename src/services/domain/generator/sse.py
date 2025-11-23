@@ -10,7 +10,14 @@ logger: FrameworkLogger = get_logger()
 
 
 class SSEGeneratorService(BaseGeneratorService):
-    """Generator service dành cho SSE với streaming response và RAG integration"""
+    """
+    Generator service for Server-Sent Events (SSE) streaming responses.
+
+    Supports:
+    - Initial LLM tool detection phase (streamed)
+    - Optional tool execution
+    - Final streaming RAG response
+    """
 
     async def _initial_llm_call(
         self,
@@ -19,14 +26,22 @@ class SSEGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
-        """Phase 1: Initial LLM call để kiểm tra tool calls"""
+        """
+        Phase 1: Stream initial LLM call to detect tool calls.
+
+        Yields:
+            Tuple: (event, prompt_messages)
+        """
         self._update_trace_context(session_id, user_id)
+
         formatted_history = "\n".join(
             f"{m['role'].capitalize()}: {m['content']}" for m in chat_history
         )
+
         prompt_template = self.prompt_userinput.get_langchain_prompt(
             question=question, chat_history=formatted_history
         )
+
         messages = [SystemMessage(content=prompt_template)]
 
         # Dùng astream_events để có tool call info
@@ -47,26 +62,35 @@ class SSEGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
-        """SSE version: stream initial call và check tool calls on-the-fly"""
+        """
+        Phase 1+2: Stream response from LLM and optionally capture tool calls.
+
+        Yields:
+            Tuple[bool, str | list]: If `True`, return tool execution phase messages;
+            otherwise, yield streamed content chunk.
+        """
         tool_calls = []
         full_response_content = ""
         messages = []
         tool_call_detected = False
+
         # Phase 1: Stream và parse events
         async for event, prompt_messages in self._initial_llm_call(
             question, chat_history, session_id, user_id
         ):
             messages = prompt_messages
             kind = event["event"]
+
             # Check on the fly if chunk is a tool call or a response
             if kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
+
                 # Lấy content text nếu có
                 if chunk.content:
                     full_response_content += chunk.content
                     yield False, chunk.content
 
-                # Kiểm tra tool call chính thức
+                # Check for tool call trigger
                 has_tool_calls = (
                     chunk.additional_kwargs
                     and "tool_calls" in chunk.additional_kwargs
@@ -88,6 +112,7 @@ class SSEGeneratorService(BaseGeneratorService):
             messages = await self._execute_tools(
                 tool_calls, messages, session_id, user_id
             )
+
             yield True, messages
 
     @semantic_cache_llms.cache(namespace="post-cache")
@@ -99,11 +124,17 @@ class SSEGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
-        """Phase 3: RAG generation với streaming output"""
+        """
+        Phase 3: Generate final answer using RAG (streaming chunks).
+
+        Yields:
+            str: Individual response chunks.
+        """
         self._update_trace_context(session_id, user_id)
 
         context_str = build_context(messages)
         logger.info(f"Generated Context String: '{context_str}'")
+
         # RAG prompt với context
         prompt = self.prompt_rag.get_langchain_prompt(
             chat_history="\n".join(
@@ -134,7 +165,14 @@ class SSEGeneratorService(BaseGeneratorService):
         session_id: str | None = None,
         user_id: str | None = None,
     ):
-        """Generate streaming response with RAG integration"""
+        """
+        Full RAG streaming pipeline:
+        - Streams initial LLM response
+        - If tools are required → execute tools → stream final RAG result
+
+        Yields:
+            str: Chunks of response as SSE.
+        """
         try:
             if chat_history is None:
                 chat_history = []
@@ -154,6 +192,7 @@ class SSEGeneratorService(BaseGeneratorService):
                         messages = data
                     else:
                         yield data
+
                 # Update the span with the result of this step
                 create_message_span.update(output={"is_tool_call": is_tool_call})
 

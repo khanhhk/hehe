@@ -1,5 +1,33 @@
-# Định nghĩa các dataset với metadata
-DATASETS = {
+from typing import Dict, List, TypedDict
+
+
+class Document(TypedDict):
+    """
+    Represents a single document with a title and a URL.
+
+    Attributes:
+        title (str): The title or name of the document.
+        url (str): The direct link to access the document.
+    """
+
+    title: str
+    url: str
+
+
+class DatasetEntry(TypedDict):
+    """
+    Represents a dataset consisting of multiple documents and a short description.
+
+    Attributes:
+        data (List[Document]): A list of document entries belonging to the dataset.
+        description (str): A human-readable description of what the dataset is about.
+    """
+
+    data: List[Document]
+    description: str
+
+
+DATASETS: Dict[str, DatasetEntry] = {
     "environment_battery": {
         "data": [
             {
@@ -117,10 +145,28 @@ environment_battery = DATASETS["environment_battery"]["data"]
 llm_papers = DATASETS["llm_papers"]["data"]
 
 
-# Dynamic function to get all dataset names
-def get_dataset_names():
+def get_dataset_names() -> List[str]:
+    """
+    Get all available dataset names.
+
+    Returns:
+        list[str]: A list of dataset keys (e.g., ['environment_battery', 'llm_papers']).
+    """
     return list(DATASETS.keys())
 
 
-def get_dataset_by_name(name):
-    return DATASETS.get(name, {}).get("data", [])
+def get_dataset_by_name(name: str) -> List[Document]:
+    """
+    Retrieve a dataset's list of documents by its name.
+
+    Args:
+        name (str): The key corresponding to the desired dataset.
+
+    Returns:
+        list[dict]: A list of document entries with 'title' and 'url',
+                    or an empty list if the dataset name is not found.
+    """
+    entry = DATASETS.get(name)
+    if entry is None:
+        return []
+    return entry["data"]

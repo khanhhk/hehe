@@ -2,7 +2,8 @@
 chromadb==1.0.20
 minio==7.2.15
 # boto3>=1.38.13
-# redis>=5.0.0,<6.0.0
+redis>=5.0.0,<6.0.0
+types-redis==4.6.0.20241004
 langchain-redis==0.2.3
 
 # Data Processing
