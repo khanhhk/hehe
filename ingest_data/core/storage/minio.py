@@ -1,27 +1,13 @@
-import logging
 import os
 from io import BytesIO
 from typing import Tuple
 
-import torch
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from minio import Minio
 from minio.error import S3Error
-from transformers import AutoTokenizer
 
+from utils.logger import FrameworkLogger, get_logger
 
-def get_logger() -> logging.Logger:
-    """
-    Initialize and return a logger with predefined format and INFO level.
-
-    Returns:
-        logging.Logger: Configured logger instance.
-    """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
-    return logging.getLogger(__name__)
+logger: FrameworkLogger = get_logger()
 
 
 def check_src_data(file_link: str) -> bool:
@@ -35,9 +21,6 @@ def check_src_data(file_link: str) -> bool:
         bool: True if the file exists, False otherwise.
     """
     return os.path.exists(file_link)
-
-
-logger = get_logger()
 
 
 class MinioLoader:
@@ -140,33 +123,3 @@ class MinioLoader:
         except S3Error as e:
             logger.error("Failed to download from MinIO: %s", e)
             raise
-
-
-MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-
-
-def get_tokenizer():
-    """
-    Load and return the tokenizer from HuggingFace Transformers.
-
-    Returns:
-        transformers.PreTrainedTokenizer: Tokenizer corresponding to `MODEL_NAME`.
-    """
-    print(f"🔄 Loading tokenizer: {MODEL_NAME}")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    return tokenizer
-
-
-def get_embeddings() -> HuggingFaceEmbeddings:
-    """
-    Load and return a HuggingFace sentence embedding model using LangChain.
-
-    Returns:
-        HuggingFaceEmbeddings: Embedding model with device auto-selected.
-    """
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"--- Using device: {device.upper()} ---")
-    embeddings = HuggingFaceEmbeddings(
-        model_name=MODEL_NAME, model_kwargs={"device": device}
-    )
-    return embeddings

@@ -8,7 +8,7 @@ import redis
 from nemoguardrails import LLMRails
 
 from src.config.settings import SETTINGS
-from src.utils.logger import FrameworkLogger, get_logger
+from utils.logger import FrameworkLogger, get_logger
 
 logger: FrameworkLogger = get_logger()
 

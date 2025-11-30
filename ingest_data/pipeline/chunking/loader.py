@@ -4,22 +4,16 @@ import pickle
 from io import BytesIO
 from typing import List, Union
 
-from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.chunking import HybridChunker
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
-from docling.document_converter import DocumentConverter, PdfFormatOption
 from langchain.schema import Document
 from langchain_docling.loader import DoclingLoader, ExportType
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
-from ingest_data.plugins.config.minio_config import (
-    MINIO_ACCESS_KEY,
-    MINIO_ENDPOINT,
-    MINIO_SECRET_KEY,
-)
-from ingest_data.plugins.jobs.utils import MinioLoader, get_tokenizer
+from ingest_data.config import MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY
+from ingest_data.core.embedding.tokenizer import get_tokenizer
+from ingest_data.core.storage.minio import MinioLoader
+from ingest_data.pipeline.chunking.converter import create_advanced_converter
 
 minio_loader = MinioLoader(MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY)
 
@@ -27,35 +21,6 @@ minio_loader = MinioLoader(MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY)
 def get_num_cpu() -> int:
     """Get number of available CPU cores."""
     return multiprocessing.cpu_count()
-
-
-def create_advanced_converter() -> DocumentConverter:
-    """
-    Create a Docling DocumentConverter that supports both PDF and DOCX parsing.
-
-    Returns:
-        DocumentConverter: Configured for table structure extraction in PDFs.
-    """
-    pdf_pipeline_options = PdfPipelineOptions()
-    pdf_pipeline_options.do_ocr = False
-    pdf_pipeline_options.do_table_structure = True  # Bật nhận dạng cấu trúc bảng
-    pdf_pipeline_options.table_structure_options.do_cell_matching = True
-    # Sử dụng chế độ chính xác cao nhất để nhận dạng bảng
-    pdf_pipeline_options.table_structure_options.mode = TableFormerMode.ACCURATE
-
-    # Tạo converter hỗ trợ cả PDF và DOCX
-    doc_converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(
-                pipeline_options=pdf_pipeline_options, backend=PyPdfiumDocumentBackend
-            ),
-            # Support cho DOCX - Docling tự động xử lý DOCX tốt với default settings
-            InputFormat.DOCX: None,
-        }
-    )
-
-    print("-> Converter đã được cấu hình cho PDF và DOCX")
-    return doc_converter
 
 
 class LoadAndChunk:

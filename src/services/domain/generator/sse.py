@@ -1,8 +1,8 @@
 from langchain_core.messages import AIMessage, SystemMessage
 
 from src.cache.semantic_cache import semantic_cache_llms
-from src.utils.logger import FrameworkLogger, get_logger
 from src.utils.text_processing import build_context
+from utils.logger import FrameworkLogger, get_logger
 
 from .base import BaseGeneratorService
 

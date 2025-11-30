@@ -7,8 +7,8 @@ from langchain_core.outputs import Generation
 from langchain_redis import RedisSemanticCache
 
 from src.infrastructure.embeddings.embeddings import EmbeddingService
-from src.utils.logger import FrameworkLogger, get_logger
 from src.utils.text_processing import build_context
+from utils.logger import FrameworkLogger, get_logger
 
 logger: FrameworkLogger = get_logger()
 

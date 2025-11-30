@@ -4,10 +4,11 @@ from langchain.schema import Document
 from langchain_chroma import Chroma
 from langchain_community.vectorstores.utils import filter_complex_metadata
 
-from ingest_data.plugins.config.minio_config import (
+from ingest_data.config import (
     MINIO_ACCESS_KEY,
     MINIO_ENDPOINT,
     MINIO_SECRET_KEY,
+    MODEL_NAME,
 )
 from ingest_data.plugins.jobs.utils import MinioLoader, get_embeddings
 
@@ -27,8 +28,7 @@ class DocumentEmbedder:
         - A multilingual embedding model
         - MinIO loader instance for object storage interaction
         """
-        model_name = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-        print(f"-> Đang khởi tạo embeddings cho model: {model_name}")
+        print(f"-> Đang khởi tạo embeddings cho model: {MODEL_NAME}")
         self.embeddings = get_embeddings()
         self.minio_loader = MinioLoader(
             MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY

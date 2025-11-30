@@ -14,8 +14,8 @@ from src.schemas.domain.retrieval import SearchArgs
 from src.services.domain.generator.rest_api import RestApiGeneratorService
 from src.services.domain.generator.sse import SSEGeneratorService
 from src.services.domain.summarize import SummarizeService
-from src.utils.logger import FrameworkLogger, get_logger
 from src.utils.text_processing import is_guardrails_error
+from utils.logger import FrameworkLogger, get_logger
 
 logger: FrameworkLogger = get_logger()
 

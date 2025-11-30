@@ -8,7 +8,7 @@ from src.api.dependencies.rag_dependency import get_rag_service
 from src.schemas.api.requests import UserInput
 from src.schemas.api.response import ResponseOutput
 from src.services.application.rag_service import Rag
-from src.utils.logger import FrameworkLogger, get_logger
+from utils.logger import FrameworkLogger, get_logger
 
 logger: FrameworkLogger = get_logger()
 router = APIRouter()

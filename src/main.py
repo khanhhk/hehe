@@ -14,7 +14,7 @@ from nemoguardrails import LLMRails, RailsConfig
 from src.api.routers.api import api_router
 from src.config.settings import APP_CONFIGS, SETTINGS
 from src.services.application.rag_service import rag_service
-from src.utils.logger import FrameworkLogger, get_logger
+from utils.logger import FrameworkLogger, get_logger
 
 logger: FrameworkLogger = get_logger()
 load_dotenv()
